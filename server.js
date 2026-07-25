@@ -9,14 +9,19 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_DOMAIN = process.env.PUBLIC_DOMAIN || `http://localhost:${PORT}`;
 const UPLOAD_DIR = path.join(__dirname, 'public', 'uploads');
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const DATA_DIR = path.join(__dirname, 'data');
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const ASSETS_DIR = path.join(__dirname, 'public', 'assets');
 
-// Ensure upload directory exists on boot
-function ensureUploadDir() {
-  if (!fs.existsSync(UPLOAD_DIR)) {
-    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-  }
+// Ensure required directories exist on boot
+function ensureDirs() {
+  [UPLOAD_DIR, DATA_DIR, ASSETS_DIR].forEach((dir) => {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  });
 }
-ensureUploadDir();
+ensureDirs();
 
 // Multer disk storage with unique filenames
 const storage = multer.diskStorage({
@@ -61,6 +66,57 @@ function safeFilePath(filename) {
 function publicViewUrl(filename) {
   return `${PUBLIC_DOMAIN}/v/${filename}`;
 }
+
+// Settings persistence
+const DEFAULT_SETTINGS = {
+  orgName: 'Church of Jesus Christ the Risen Son of God',
+  orgShortName: 'CJCRSG',
+  logoUrl: ''
+};
+
+function loadSettings() {
+  try {
+    if (fs.existsSync(SETTINGS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+      return { ...DEFAULT_SETTINGS, ...data };
+    }
+  } catch (err) {
+    console.error('Settings load error:', err);
+  }
+  return { ...DEFAULT_SETTINGS };
+}
+
+function saveSettings(settings) {
+  try {
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  } catch (err) {
+    console.error('Settings save error:', err);
+  }
+}
+
+const appSettings = loadSettings();
+
+// Logo upload
+const logoStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, ASSETS_DIR),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() || '.png';
+    const unique = `logo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+    cb(null, unique);
+  }
+});
+
+const logoUpload = multer({
+  storage: logoStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype && file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image uploads are allowed for logos'));
+    }
+  }
+}).single('logo');
 
 // Routes
 
@@ -172,6 +228,48 @@ app.post('/api/photos/delete', (req, res) => {
   res.json({ success: true, ...result });
 });
 
+// Settings API
+app.get('/api/settings', (req, res) => {
+  res.json(loadSettings());
+});
+
+app.post('/api/settings', (req, res) => {
+  logoUpload(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
+
+    const settings = loadSettings();
+    const newOrgName = req.body && req.body.orgName ? String(req.body.orgName).trim() : '';
+    const newOrgShortName = req.body && req.body.orgShortName ? String(req.body.orgShortName).trim() : '';
+    if (newOrgName) settings.orgName = newOrgName;
+    if (newOrgShortName) settings.orgShortName = newOrgShortName;
+
+    if (req.file) {
+      // Remove previous logo file to avoid piling up old assets
+      if (settings.logoUrl) {
+        const oldPath = safeAssetPath(settings.logoUrl);
+        if (oldPath && fs.existsSync(oldPath)) {
+          try { fs.unlinkSync(oldPath); } catch (e) { console.error('Old logo delete error:', e); }
+        }
+      }
+      settings.logoUrl = `/assets/${req.file.filename}`;
+    }
+
+    saveSettings(settings);
+    res.json({ success: true, settings });
+  });
+});
+
+function safeAssetPath(assetUrl) {
+  if (typeof assetUrl !== 'string' || !assetUrl.startsWith('/assets/')) return null;
+  const filename = path.basename(assetUrl);
+  if (!/^[a-zA-Z0-9._-]+$/.test(filename)) return null;
+  const resolved = path.resolve(ASSETS_DIR, filename);
+  if (!resolved.startsWith(path.resolve(ASSETS_DIR) + path.sep)) return null;
+  return resolved;
+}
+
 // QR code generator (offline, returns SVG)
 app.get('/api/qr', async (req, res) => {
   const target = req.query.url;
@@ -217,6 +315,9 @@ app.get('/gallery', serveGallery);
 app.get('/upload', (req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, 'upload.html'));
 });
+app.get('/settings', (req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, 'settings.html'));
+});
 
 // Error handler
 app.use((err, req, res, next) => {
@@ -235,13 +336,17 @@ function renderPhotoView(filename) {
   const imageUrl = `/uploads/${filename}`;
   const viewUrl = publicViewUrl(filename);
   const qrUrl = `/api/qr?url=${encodeURIComponent(viewUrl)}`;
+  const settings = loadSettings();
+  const logoBlock = settings.logoUrl
+    ? `<img src="${settings.logoUrl}" alt="${escapeHtml(settings.orgName)}" style="width:48px;height:48px;object-fit:contain;border-radius:12px;background:#fff;">`
+    : `<div style="width:48px;height:48px;border-radius:12px;background:#3b82f6;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;">${escapeHtml(settings.orgShortName || 'P')}</div>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Photo Snapshot</title>
+  <title>${escapeHtml(settings.orgShortName)} Snapshot</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -284,6 +389,16 @@ function renderPhotoView(filename) {
       display: block;
     }
     .card-body { padding: 24px; }
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .brand-text { text-align: left; }
+    .brand-text .org { font-size: 14px; font-weight: 700; color: #f8fafc; }
+    .brand-text .sub { font-size: 12px; color: #94a3b8; }
     h1 { margin: 0 0 8px; font-size: 22px; }
     p { margin: 0 0 20px; color: #94a3b8; font-size: 14px; }
     .btn {
@@ -316,6 +431,13 @@ function renderPhotoView(filename) {
   <div class="card">
     <img class="photo" src="${imageUrl}" alt="Snapshot" loading="eager">
     <div class="card-body">
+      <div class="brand">
+        ${logoBlock}
+        <div class="brand-text">
+          <div class="org">${escapeHtml(settings.orgName)}</div>
+          <div class="sub">${escapeHtml(settings.orgShortName)} Snapshot</div>
+        </div>
+      </div>
       <h1>Your Snapshot</h1>
       <p>Scan the QR code to open this photo on your device, or tap below to save it.</p>
       <div class="qr-wrap">
@@ -332,6 +454,15 @@ function renderPhotoView(filename) {
   </div>
 </body>
 </html>`;
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function renderNotFound() {

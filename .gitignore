@@ -7,6 +7,10 @@ node_modules/
 # Runtime uploads (volume mounted in production)
 public/uploads/*
 
+# Runtime settings and uploaded assets
+public/assets/
+data/
+
 # Logs
 *.log
 npm-debug.log*
