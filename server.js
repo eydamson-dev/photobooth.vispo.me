@@ -152,7 +152,7 @@ app.post('/api/upload/batch', upload.array('photos', 100), (req, res) => {
 
 // Gallery / API
 app.get('/api/photos', (req, res) => {
-  ensureUploadDir();
+  ensureDirs();
 
   fs.readdir(UPLOAD_DIR, (err, files) => {
     if (err) {
