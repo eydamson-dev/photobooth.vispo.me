@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const QRCode = require('qrcode');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -29,7 +30,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB per file
   fileFilter: (req, file, cb) => {
     if (file.mimetype && file.mimetype.startsWith('image/')) {
       cb(null, true);
@@ -57,18 +58,43 @@ function safeFilePath(filename) {
   return resolved;
 }
 
+function publicViewUrl(filename) {
+  return `${PUBLIC_DOMAIN}/v/${filename}`;
+}
+
 // Routes
+
+// OBS single-photo upload
 app.post('/api/upload', upload.single('photo'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, error: 'No photo received' });
   }
 
   const filename = req.file.filename;
-  const url = `${PUBLIC_DOMAIN}/v/${filename}`;
+  const url = publicViewUrl(filename);
 
   res.status(201).json({ success: true, filename, url });
 });
 
+// Web multi-photo upload
+app.post('/api/upload/batch', upload.array('photos', 100), (req, res) => {
+  if (!req.files || req.files.length === 0) {
+    return res.status(400).json({ success: false, error: 'No photos received' });
+  }
+
+  const files = req.files.map((file) => {
+    const filename = file.filename;
+    return {
+      filename,
+      url: `${PUBLIC_DOMAIN}/uploads/${filename}`,
+      viewUrl: publicViewUrl(filename)
+    };
+  });
+
+  res.status(201).json({ success: true, count: files.length, files });
+});
+
+// Gallery / API
 app.get('/api/photos', (req, res) => {
   ensureUploadDir();
 
@@ -86,6 +112,7 @@ app.get('/api/photos', (req, res) => {
           filename,
           url: `/uploads/${filename}`,
           viewUrl: `/v/${filename}`,
+          qrUrl: `/api/qr?url=${encodeURIComponent(publicViewUrl(filename))}`,
           timestamp: stat.mtime.getTime()
         };
       })
@@ -95,6 +122,30 @@ app.get('/api/photos', (req, res) => {
   });
 });
 
+// QR code generator (offline, returns SVG)
+app.get('/api/qr', async (req, res) => {
+  const target = req.query.url;
+  if (!target || typeof target !== 'string') {
+    return res.status(400).type('text/plain').send('Missing url query parameter');
+  }
+
+  try {
+    const svg = await QRCode.toString(target, {
+      type: 'svg',
+      margin: 1,
+      width: 320,
+      color: { dark: '#000000', light: '#ffffff' }
+    });
+    res.set('Content-Type', 'image/svg+xml');
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.send(svg);
+  } catch (err) {
+    console.error('QR generation error:', err);
+    res.status(500).type('text/plain').send('QR generation failed');
+  }
+});
+
+// Per-photo mobile view
 app.get('/v/:filename', (req, res) => {
   const { filename } = req.params;
   const filePath = safeFilePath(filename);
@@ -106,12 +157,16 @@ app.get('/v/:filename', (req, res) => {
   res.send(renderPhotoView(filename));
 });
 
+// Web pages
 function serveGallery(req, res) {
   res.sendFile(path.join(PUBLIC_DIR, 'gallery.html'));
 }
 
 app.get('/', serveGallery);
 app.get('/gallery', serveGallery);
+app.get('/upload', (req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, 'upload.html'));
+});
 
 // Error handler
 app.use((err, req, res, next) => {
@@ -128,6 +183,9 @@ app.use((err, req, res, next) => {
 // View templates
 function renderPhotoView(filename) {
   const imageUrl = `/uploads/${filename}`;
+  const viewUrl = publicViewUrl(filename);
+  const qrUrl = `/api/qr?url=${encodeURIComponent(viewUrl)}`;
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -156,17 +214,28 @@ function renderPhotoView(filename) {
       box-shadow: 0 20px 40px rgba(0,0,0,0.35);
       text-align: center;
     }
-    .card img {
+    .card img.photo {
       width: 100%;
       height: auto;
       display: block;
       background: #334155;
     }
-    .card-body {
-      padding: 24px;
+    .qr-wrap {
+      background: #fff;
+      border-radius: 14px;
+      padding: 12px;
+      margin: 0 auto 20px;
+      width: fit-content;
+      max-width: 90%;
     }
+    .qr-wrap img {
+      width: 180px;
+      height: 180px;
+      display: block;
+    }
+    .card-body { padding: 24px; }
     h1 { margin: 0 0 8px; font-size: 22px; }
-    p { margin: 0 0 24px; color: #94a3b8; font-size: 14px; }
+    p { margin: 0 0 20px; color: #94a3b8; font-size: 14px; }
     .btn {
       display: inline-flex;
       align-items: center;
@@ -195,10 +264,13 @@ function renderPhotoView(filename) {
 </head>
 <body>
   <div class="card">
-    <img src="${imageUrl}" alt="Snapshot" loading="eager">
+    <img class="photo" src="${imageUrl}" alt="Snapshot" loading="eager">
     <div class="card-body">
       <h1>Your Snapshot</h1>
-      <p>Tap below to save this photo to your camera roll.</p>
+      <p>Scan the QR code to open this photo on your device, or tap below to save it.</p>
+      <div class="qr-wrap">
+        <img src="${qrUrl}" alt="QR code">
+      </div>
       <a class="btn" href="${imageUrl}" download="${filename}">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
