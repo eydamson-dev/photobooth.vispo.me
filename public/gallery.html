@@ -13,6 +13,7 @@
       opacity: 0;
       transform: translateY(12px);
       transition: opacity .4s ease, transform .4s ease, box-shadow .2s ease;
+      position: relative;
     }
     .photo-card.loaded { opacity: 1; transform: translateY(0); }
     .photo-card:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(0,0,0,0.35); }
@@ -23,6 +24,38 @@
       background: #1e293b;
       border-radius: 0.75rem;
     }
+    .photo-card .checkbox {
+      position: absolute;
+      top: 0.5rem;
+      left: 0.5rem;
+      width: 1.5rem;
+      height: 1.5rem;
+      accent-color: #3b82f6;
+      cursor: pointer;
+      z-index: 10;
+      opacity: 0;
+      transition: opacity .2s ease;
+    }
+    .photo-card.select-mode .checkbox { opacity: 1; }
+    .photo-card .delete-btn {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      width: 2rem;
+      height: 2rem;
+      border-radius: 999px;
+      background: rgba(239, 68, 68, 0.9);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity .2s ease, transform .15s ease;
+      cursor: pointer;
+      z-index: 10;
+    }
+    .photo-card:hover .delete-btn { opacity: 1; }
+    .photo-card .delete-btn:hover { transform: scale(1.05); background: #dc2626; }
     .date-header {
       break-inside: avoid;
       column-span: all;
@@ -60,9 +93,22 @@
       z-index: 60;
     }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .bulk-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: #1e293b;
+      border-top: 1px solid #334155;
+      padding: 0.75rem 1rem;
+      z-index: 40;
+      transform: translateY(100%);
+      transition: transform .25s ease;
+    }
+    .bulk-bar.show { transform: translateY(0); }
   </style>
 </head>
-<body class="min-h-screen flex flex-col">
+<body class="min-h-screen flex flex-col pb-16">
   <header class="sticky top-0 z-30 bg-[#0f172a]/90 backdrop-blur border-b border-slate-700/50">
     <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
       <div class="flex items-center gap-3">
@@ -76,11 +122,22 @@
           <p class="text-xs text-slate-400"><span id="count">0</span> photos</p>
         </div>
       </div>
-      <button id="refresh" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition text-slate-200" title="Refresh">
-        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-        </svg>
-      </button>
+      <div class="flex items-center gap-2">
+        <a href="/upload" class="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition flex items-center gap-1.5">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L6 8m4-4v12" />
+          </svg>
+          Upload
+        </a>
+        <button id="selectBtn" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition text-slate-200 text-sm font-semibold">
+          Select
+        </button>
+        <button id="refresh" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition text-slate-200" title="Refresh">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        </button>
+      </div>
     </div>
   </header>
 
@@ -92,6 +149,23 @@
     <div id="grid" class="columns-2 md:columns-3 lg:columns-4 gap-4"></div>
     <div id="sentinel" class="h-8"></div>
   </main>
+
+  <!-- Bulk delete bar -->
+  <div id="bulkBar" class="bulk-bar">
+    <div class="max-w-7xl mx-auto flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <button id="selectAllBtn" class="px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold transition">Select all</button>
+        <button id="cancelSelectBtn" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-semibold transition">Cancel</button>
+        <span id="selectedCount" class="text-sm text-slate-300">0 selected</span>
+      </div>
+      <button id="deleteSelectedBtn" class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-semibold transition flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        </svg>
+        Delete selected
+      </button>
+    </div>
+  </div>
 
   <div id="lightbox" class="fixed inset-0 z-50 hidden bg-black/95 backdrop-blur-sm flex items-center justify-center p-4">
     <button id="lb-close" class="absolute top-4 right-4 p-2 rounded-full bg-slate-800/80 text-slate-200 hover:bg-slate-700 transition">
@@ -131,6 +205,12 @@
     const loading = document.getElementById('loading');
     const countEl = document.getElementById('count');
     const refreshBtn = document.getElementById('refresh');
+    const selectBtn = document.getElementById('selectBtn');
+    const selectAllBtn = document.getElementById('selectAllBtn');
+    const cancelSelectBtn = document.getElementById('cancelSelectBtn');
+    const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
+    const selectedCountEl = document.getElementById('selectedCount');
+    const bulkBar = document.getElementById('bulkBar');
     const lightbox = document.getElementById('lightbox');
     const lbImg = document.getElementById('lb-img');
     const lbQr = document.getElementById('lb-qr');
@@ -143,6 +223,8 @@
     let renderedIndex = 0;
     const batchSize = 20;
     let renderedGroups = new Set();
+    let selectMode = false;
+    const selected = new Set();
 
     const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
     const df = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -165,10 +247,94 @@
       return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     }
 
-    function showToast(msg) {
+    function showToast(msg, type = 'success') {
       toast.textContent = msg;
+      toast.style.background = type === 'error' ? '#ef4444' : type === 'warning' ? '#f59e0b' : '#10b981';
       toast.classList.add('show');
-      setTimeout(() => toast.classList.remove('show'), 2200);
+      setTimeout(() => toast.classList.remove('show'), 2500);
+    }
+
+    function setSelectMode(enabled) {
+      selectMode = enabled;
+      document.querySelectorAll('.photo-card').forEach(card => {
+        card.classList.toggle('select-mode', enabled);
+      });
+      selectBtn.textContent = enabled ? 'Done' : 'Select';
+      selectBtn.classList.toggle('bg-blue-600', enabled);
+      selectBtn.classList.toggle('text-white', enabled);
+      selectBtn.classList.toggle('bg-slate-800', !enabled);
+      if (enabled) {
+        bulkBar.classList.add('show');
+      } else {
+        bulkBar.classList.remove('show');
+        selected.clear();
+        updateSelectionUI();
+      }
+    }
+
+    function updateSelectionUI() {
+      selectedCountEl.textContent = `${selected.size} selected`;
+      deleteSelectedBtn.disabled = selected.size === 0;
+      deleteSelectedBtn.style.opacity = selected.size === 0 ? '0.5' : '1';
+      document.querySelectorAll('.checkbox').forEach(cb => {
+        cb.checked = selected.has(cb.dataset.filename);
+      });
+    }
+
+    function toggleSelectAll() {
+      const all = photos.map(p => p.filename);
+      if (selected.size === all.length) {
+        selected.clear();
+      } else {
+        all.forEach(f => selected.add(f));
+      }
+      updateSelectionUI();
+    }
+
+    async function deleteSingle(filename) {
+      if (!confirm(`Delete this photo?\n${filename}`)) return;
+      try {
+        const res = await fetch(`/api/photos/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          showToast('Photo deleted');
+          loadPhotos();
+        } else {
+          showToast(data.error || 'Delete failed', 'error');
+        }
+      } catch (err) {
+        console.error(err);
+        showToast('Delete failed', 'error');
+      }
+    }
+
+    async function deleteSelected() {
+      if (selected.size === 0) return;
+      if (!confirm(`Delete ${selected.size} selected photo${selected.size === 1 ? '' : 's'}? This cannot be undone.`)) return;
+      try {
+        const res = await fetch('/api/photos/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filenames: Array.from(selected) })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          const errors = data.errors?.length || 0;
+          const deleted = data.deleted?.length || 0;
+          if (errors) {
+            showToast(`${deleted} deleted, ${errors} failed`, 'warning');
+          } else {
+            showToast(`${deleted} photo${deleted === 1 ? '' : 's'} deleted`);
+          }
+          setSelectMode(false);
+          loadPhotos();
+        } else {
+          showToast(data.error || 'Delete failed', 'error');
+        }
+      } catch (err) {
+        console.error(err);
+        showToast('Delete failed', 'error');
+      }
     }
 
     function openLightbox(photo) {
@@ -199,8 +365,17 @@
         await navigator.clipboard.writeText(full);
         showToast('Sharing link copied!');
       } catch (err) {
-        showToast('Copy failed');
+        showToast('Copy failed', 'error');
       }
+    });
+
+    selectBtn.addEventListener('click', () => setSelectMode(!selectMode));
+    cancelSelectBtn.addEventListener('click', () => setSelectMode(false));
+    selectAllBtn.addEventListener('click', toggleSelectAll);
+    deleteSelectedBtn.addEventListener('click', deleteSelected);
+    refreshBtn.addEventListener('click', () => {
+      setSelectMode(false);
+      loadPhotos();
     });
 
     const imgObserver = new IntersectionObserver((entries) => {
@@ -218,11 +393,10 @@
 
     function createPhotoCard(photo) {
       const card = document.createElement('figure');
-      card.className = 'photo-card rounded-xl cursor-pointer overflow-hidden';
+      card.className = `photo-card rounded-xl cursor-pointer overflow-hidden ${selectMode ? 'select-mode' : ''}`;
       card.setAttribute('role', 'button');
       card.setAttribute('tabindex', '0');
-      card.addEventListener('click', () => openLightbox(photo));
-      card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') openLightbox(photo); });
+      card.dataset.filename = photo.filename;
 
       const img = document.createElement('img');
       img.dataset.src = photo.url;
@@ -230,7 +404,44 @@
       img.loading = 'lazy';
       img.className = 'rounded-xl';
 
+      // Checkbox for bulk selection
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'checkbox';
+      checkbox.dataset.filename = photo.filename;
+      checkbox.checked = selected.has(photo.filename);
+      checkbox.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (checkbox.checked) selected.add(photo.filename);
+        else selected.delete(photo.filename);
+        updateSelectionUI();
+      });
+
+      // Single delete button
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'delete-btn';
+      deleteBtn.title = 'Delete photo';
+      deleteBtn.innerHTML = `<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>`;
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteSingle(photo.filename);
+      });
+
+      card.addEventListener('click', (e) => {
+        if (selectMode) {
+          checkbox.checked = !checkbox.checked;
+          if (checkbox.checked) selected.add(photo.filename);
+          else selected.delete(photo.filename);
+          updateSelectionUI();
+        } else if (e.target !== deleteBtn && !deleteBtn.contains(e.target)) {
+          openLightbox(photo);
+        }
+      });
+      card.addEventListener('keydown', (e) => { if (!selectMode && (e.key === 'Enter' || e.key === ' ')) openLightbox(photo); });
+
+      card.appendChild(checkbox);
       card.appendChild(img);
+      card.appendChild(deleteBtn);
       imgObserver.observe(img);
       return card;
     }
@@ -260,6 +471,7 @@
       if (renderedIndex >= photos.length && loading) {
         loading.style.display = 'none';
       }
+      updateSelectionUI();
     }
 
     async function loadPhotos() {
@@ -268,6 +480,8 @@
         const res = await fetch('/api/photos');
         if (!res.ok) throw new Error('Failed to load');
         photos = await res.json();
+        // Keep selection only for still-existing photos
+        selected.forEach(f => { if (!photos.find(p => p.filename === f)) selected.delete(f); });
         renderedIndex = 0;
         renderedGroups.clear();
         grid.innerHTML = '';
@@ -285,8 +499,6 @@
       }
     }, { rootMargin: '200px' });
     scrollObserver.observe(document.getElementById('sentinel'));
-
-    refreshBtn.addEventListener('click', loadPhotos);
 
     loadPhotos();
   </script>

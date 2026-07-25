@@ -122,6 +122,56 @@ app.get('/api/photos', (req, res) => {
   });
 });
 
+// Single photo delete
+app.delete('/api/photos/:filename', (req, res) => {
+  const { filename } = req.params;
+  const filePath = safeFilePath(filename);
+
+  if (!filePath) {
+    return res.status(400).json({ success: false, error: 'Invalid filename' });
+  }
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ success: false, error: 'Photo not found' });
+  }
+
+  try {
+    fs.unlinkSync(filePath);
+    res.json({ success: true, deleted: filename });
+  } catch (err) {
+    console.error('Delete error:', err);
+    res.status(500).json({ success: false, error: 'Unable to delete photo' });
+  }
+});
+
+// Bulk photo delete
+app.post('/api/photos/delete', (req, res) => {
+  const filenames = req.body && Array.isArray(req.body.filenames) ? req.body.filenames : [];
+  if (filenames.length === 0) {
+    return res.status(400).json({ success: false, error: 'No filenames provided' });
+  }
+
+  const result = { deleted: [], missing: [], errors: [] };
+  filenames.forEach((filename) => {
+    const filePath = safeFilePath(filename);
+    if (!filePath) {
+      result.errors.push({ filename, error: 'Invalid filename' });
+      return;
+    }
+    if (!fs.existsSync(filePath)) {
+      result.missing.push(filename);
+      return;
+    }
+    try {
+      fs.unlinkSync(filePath);
+      result.deleted.push(filename);
+    } catch (err) {
+      result.errors.push({ filename, error: err.message });
+    }
+  });
+
+  res.json({ success: true, ...result });
+});
+
 // QR code generator (offline, returns SVG)
 app.get('/api/qr', async (req, res) => {
   const target = req.query.url;
