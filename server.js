@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const QRCode = require('qrcode');
+const { ZipArchive } = require('archiver');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -226,6 +227,43 @@ app.post('/api/photos/delete', (req, res) => {
   });
 
   res.json({ success: true, ...result });
+});
+
+// Download all photos as a ZIP
+app.get('/api/photos/download', (req, res) => {
+  ensureDirs();
+
+  fs.readdir(UPLOAD_DIR, (err, files) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ error: 'Unable to read photos' });
+    }
+
+    const imageFiles = files.filter((f) => /\.(png|jpe?g|webp|gif)$/i.test(f));
+    if (imageFiles.length === 0) {
+      return res.status(404).json({ error: 'No photos to download' });
+    }
+
+    const zipName = `photos-${new Date().toISOString().slice(0, 10)}.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
+
+    const archive = new ZipArchive({ zlib: { level: 9 } });
+    archive.on('error', (zipErr) => {
+      console.error('Zip error:', zipErr);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Unable to create zip' });
+      } else {
+        res.end();
+      }
+    });
+
+    archive.pipe(res);
+    imageFiles.forEach((file) => {
+      archive.file(path.join(UPLOAD_DIR, file), { name: file });
+    });
+    archive.finalize();
+  });
 });
 
 // Settings API
